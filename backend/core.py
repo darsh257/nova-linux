@@ -1,17 +1,12 @@
 import json
-import sys
-from pathlib import Path
 
-BACKEND_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BACKEND_DIR))
-
-from tools.memory import get_memory
-from tools.cpu import read_cpu
-from tools.disk import get_disk
-from tools.processes import get_processes
-from tools.network import get_network_info
-from tools.services import get_services
-from tools.logs import get_logs
+from backend.tools.memory import get_memory
+from backend.tools.cpu import read_cpu
+from backend.tools.disk import get_disk
+from backend.tools.processes import get_processes
+from backend.tools.network import get_network_info
+from backend.tools.services import get_services
+from backend.tools.logs import get_logs
 
 
 def collect_system_info():

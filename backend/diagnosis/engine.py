@@ -1,5 +1,6 @@
-from diagnosis.rules import run_rules
-from diagnosis.correlation import correlate
+from backend.diagnosis.rules import run_rules
+from backend.diagnosis.correlation import correlate
+from backend.diagnosis.evidence import build_evidence
 
 
 def analyze(data):
@@ -11,6 +12,12 @@ def analyze(data):
         findings
     )
 
+    evidence = build_evidence(
+        data,
+        findings,
+        correlations
+    )
+
     all_findings = findings + correlations
 
     if not all_findings:
@@ -20,7 +27,8 @@ def analyze(data):
             "severity": "info",
             "summary": "No major anomalies detected.",
             "findings": [],
-            "correlations": []
+            "correlations": [],
+            "evidence": evidence
         }
 
     severity_order = {
@@ -42,5 +50,6 @@ def analyze(data):
             "finding(s) detected."
         ),
         "findings": findings,
-        "correlations": correlations
+        "correlations": correlations,
+        "evidence": evidence
     }
