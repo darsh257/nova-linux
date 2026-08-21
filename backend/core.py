@@ -7,6 +7,7 @@ from backend.tools.processes import get_processes
 from backend.tools.network import get_network_info
 from backend.tools.services import get_services
 from backend.tools.logs import get_logs
+from backend.tools.storage import get_storage
 
 
 def collect_system_info():
@@ -15,6 +16,7 @@ def collect_system_info():
         "memory": get_memory(),
         "cpu": read_cpu(),
         "disk": get_disk(),
+        "storage": get_storage(),
         "processes": get_processes(),
         "network": get_network_info(),
         "services": get_services(),

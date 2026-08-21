@@ -1,10 +1,11 @@
 import subprocess
 
+
 def run_ps(sort_by, limit):
     command = [
         "ps",
         "-eo",
-        "pid,ppid,user,%cpu,%mem,rss,stat,comm",
+        "pid,ppid,user,%cpu,%mem,rss,stat,etime,comm",
         f"--sort={sort_by}"
     ]
 
@@ -21,12 +22,22 @@ def run_ps(sort_by, limit):
 
     for line in lines[1:limit + 1]:
 
-        parts = line.split(None, 7)
+        parts = line.split(None, 8)
 
-        if len(parts) < 8:
+        if len(parts) < 9:
             continue
 
-        pid, ppid, user, cpu, memory, rss, state, command = parts
+        (
+            pid,
+            ppid,
+            user,
+            cpu,
+            memory,
+            rss,
+            state,
+            elapsed,
+            command
+        ) = parts
 
         processes.append({
             "pid": int(pid),
@@ -36,6 +47,7 @@ def run_ps(sort_by, limit):
             "memory_percent": float(memory),
             "rss_kb": int(rss),
             "state": state,
+            "elapsed": elapsed,
             "command": command
         })
 

@@ -1,4 +1,4 @@
-from ollama_client import ask_qwen
+from backend.ai.ollama_client import ask_qwen
 
 
 prompt = """
