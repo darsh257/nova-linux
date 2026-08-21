@@ -2,12 +2,24 @@ from backend.diagnosis.log_intelligence import (
     build_log_intelligence
 )
 
-from backend.diagnosis.storage_intelligence import (
-    analyze_storage
-)
 
+def build_evidence(data, findings, correlations, storage_intelligence=None):
+    """
+    Build the structured evidence dictionary.
 
-def build_evidence(data, findings, correlations):
+    Parameters
+    ----------
+    data : dict
+        Raw telemetry from collect_system_info().
+    findings : list
+        Deterministic findings from run_rules().
+    correlations : list
+        Correlations from correlate().
+    storage_intelligence : dict, optional
+        Already-computed storage intelligence from analyze_storage().
+        If None (e.g. called from tests), no storage section is included.
+        Passing this avoids calling analyze_storage() a second time.
+    """
 
     # -------------------------------------------------
     # LOG INTELLIGENCE
@@ -15,14 +27,6 @@ def build_evidence(data, findings, correlations):
 
     log_intelligence = build_log_intelligence(
         data["logs"]
-    )
-
-    # -------------------------------------------------
-    # STORAGE INTELLIGENCE
-    # -------------------------------------------------
-
-    storage_intelligence = analyze_storage(
-        data.get("storage", {})
     )
 
     # -------------------------------------------------
@@ -38,22 +42,44 @@ def build_evidence(data, findings, correlations):
     top_memory = data["processes"]["top_memory"]
 
     # -------------------------------------------------
-    # DETERMINISTIC ANOMALY STATE
+    # CONFIRMED ANOMALY STATE
+    #
+    # Phase 9 requirement:
+    #
+    # Informational observations (severity="info" /
+    # type="observation") must NOT mark the system as
+    # having a confirmed anomaly.
+    #
+    # Only findings or correlations whose severity is
+    # "warning" or "critical" count as real anomalies.
     # -------------------------------------------------
 
-    # A confirmed anomaly exists ONLY when the
-    # deterministic rules engine or correlation engine
-    # has produced evidence.
+    def _is_anomaly(item):
+        """
+        Return True when the item is an actual anomaly
+        (severity warning or critical), not just an
+        informational observation.
+        """
+        severity = item.get("severity", "info")
+        item_type = item.get("type", "anomaly")
 
-    confirmed_anomaly = bool(
-        findings or correlations
+        # Explicitly tagged observations are never anomalies
+        if item_type == "observation":
+            return False
+
+        return severity in ("warning", "critical")
+
+    confirmed_anomaly = any(
+        _is_anomaly(f) for f in findings
+    ) or any(
+        _is_anomaly(c) for c in correlations
     )
 
     # -------------------------------------------------
     # EVIDENCE OBJECT
     # -------------------------------------------------
 
-    return {
+    evidence = {
 
         # =============================================
         # DIAGNOSTIC STATE
@@ -88,7 +114,16 @@ def build_evidence(data, findings, correlations):
                     cpu["cpu_count"],
 
                 "usage_percent":
-                    cpu["usage_percent"]
+                    cpu["usage_percent"],
+
+                "load1":
+                    cpu.get("load1"),
+
+                "load5":
+                    cpu.get("load5"),
+
+                "load15":
+                    cpu.get("load15"),
             },
 
             "memory": {
@@ -192,13 +227,6 @@ def build_evidence(data, findings, correlations):
             correlations,
 
         # =============================================
-        # STORAGE INTELLIGENCE
-        # =============================================
-
-        "storage_intelligence":
-            storage_intelligence,
-
-        # =============================================
         # SERVICES
         # =============================================
 
@@ -259,6 +287,20 @@ def build_evidence(data, findings, correlations):
 
             # Cleanup must never happen automatically.
             "automatic_storage_cleanup_disabled":
-                True
+                True,
+
+            # Info-level observations do not count as anomalies.
+            "info_observations_do_not_trigger_anomaly_state":
+                True,
         }
     }
+
+    # =============================================
+    # STORAGE INTELLIGENCE
+    # (already computed by engine.py — no second call)
+    # =============================================
+
+    if storage_intelligence is not None:
+        evidence["storage_intelligence"] = storage_intelligence
+
+    return evidence

@@ -2,6 +2,36 @@ import os
 import time
 
 
+def _read_loadavg():
+    """
+    Read /proc/loadavg and return (load1, load5, load15).
+
+    Returns (None, None, None) on any read or parse failure so that
+    a missing or unreadable /proc/loadavg never crashes telemetry.
+    """
+
+    try:
+
+        with open("/proc/loadavg", "r") as file:
+
+            line = file.readline()
+
+        parts = line.split()
+
+        if len(parts) < 3:
+            return None, None, None
+
+        return (
+            float(parts[0]),
+            float(parts[1]),
+            float(parts[2]),
+        )
+
+    except (OSError, ValueError):
+
+        return None, None, None
+
+
 def read_cpu():
 
     def read():
@@ -37,9 +67,14 @@ def read_cpu():
             / total_delta
         ) * 100
 
+    load1, load5, load15 = _read_loadavg()
+
     return {
         "cpu_count": os.cpu_count(),
-        "usage_percent": round(usage, 2)
+        "usage_percent": round(usage, 2),
+        "load1": load1,
+        "load5": load5,
+        "load15": load15,
     }
 
 

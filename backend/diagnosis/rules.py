@@ -1,4 +1,8 @@
 from backend.diagnosis.process_classifier import classify_process
+from backend.diagnosis.service_classifier import (
+    classify_service,
+    parse_failed_services,
+)
 
 
 # ============================================================
@@ -51,27 +55,40 @@ def check_memory(data):
 
     # --------------------------------------------------
     # HIGH MEMORY USAGE
+    #
+    # High usage_percent alone is NOT sufficient on a
+    # large-RAM machine (e.g. 90% of 32 GB = 3.2 GB free).
+    #
+    # We require available_mb to be below a meaningful
+    # threshold:
+    #
+    #   < 512 MB  → critical candidate (combined below)
+    #   < 1024 MB → warn even at 85% usage
+    #   >= 1024 MB → no warning purely from %
     # --------------------------------------------------
 
-    if memory_usage >= 85:
+    available_mb = memory["available_mb"]
+
+    if memory_usage >= 85 and available_mb < 1024:
 
         findings.append({
             "id": "high_memory",
             "severity": "warning",
             "confidence": 0.85,
 
-            "title": "High memory usage",
+            "title": "High memory usage with low available memory",
 
             "evidence": [
                 f"Memory usage is {memory_usage}%",
-                f"Available memory is {memory['available_mb']} MB"
+                f"Available memory is {available_mb} MB",
+                "Available memory is below 1024 MB"
             ],
 
             "memory": {
                 "usage_percent": memory_usage,
                 "total_mb": memory["total_mb"],
                 "used_mb": memory["used_mb"],
-                "available_mb": memory["available_mb"]
+                "available_mb": available_mb
             },
 
             "swap": {
@@ -452,27 +469,74 @@ def check_processes(data):
 # SYSTEMD SERVICE RULES
 # ============================================================
 
+# Confidence mapping by tier.
+# Known tiers have high confidence; unknown is slightly lower.
+_SERVICE_TIER_CONFIDENCE = {
+    "critical_system": 0.97,
+    "optional_system": 0.90,
+    "user_application": 0.88,
+    "development": 0.80,
+    "unknown": 0.75,
+}
+
+
 def check_services(data):
+    """
+    Inspect failed systemd services and produce a per-service finding
+    with severity proportional to the service tier.
+
+    Severity mapping
+    ----------------
+    critical_system  → critical
+    optional_system  → warning
+    user_application → warning
+    development      → info
+    unknown          → warning
+    """
+
     findings = []
 
-    failed = data["services"]["failed_services"]["stdout"]
+    failed_output = (
+        data["services"]["failed_services"]["stdout"]
+    )
 
-    if failed.strip():
+    if not failed_output.strip():
+        return findings
+
+    service_names = parse_failed_services(failed_output)
+
+    for service_name in service_names:
+
+        classification = classify_service(service_name)
+
+        tier = classification["tier"]
+        severity = classification["severity"]
+        explanation = classification["explanation"]
+        confidence = _SERVICE_TIER_CONFIDENCE.get(tier, 0.75)
 
         findings.append({
 
-            "id": "failed_services",
+            "id": "failed_service",
 
-            "severity": "critical",
+            "severity": severity,
 
-            "confidence": 0.95,
+            "confidence": confidence,
 
             "title": (
-                "One or more systemd "
-                "services have failed"
+                f"Failed service: {service_name}"
             ),
 
-            "evidence": failed.splitlines()
+            "evidence": [
+                f"Service {service_name!r} is in a failed state",
+                f"Service tier: {tier}",
+                explanation,
+            ],
+
+            "service_name": service_name,
+
+            "service_tier": tier,
+
+            "classification": classification,
         })
 
     return findings

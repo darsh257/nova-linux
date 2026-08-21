@@ -64,7 +64,8 @@ def analyze(data):
     evidence = build_evidence(
         data,
         findings,
-        correlations
+        correlations,
+        storage_intelligence
     )
 
     # ============================================================
@@ -86,15 +87,39 @@ def analyze(data):
     all_findings = findings + correlations
 
     # ============================================================
-    # 9. HEALTHY SYSTEM
+    # 9. DETERMINE ANOMALY-LEVEL ITEMS
+    #
+    # Only "warning" or "critical" items (not tagged as
+    # type="observation") are genuine anomalies.
+    # This mirrors the _is_anomaly() check in evidence.py.
     # ============================================================
 
-    if not all_findings:
+    def _is_anomaly(item):
+        severity = item.get("severity", "info")
+        item_type = item.get("type", "anomaly")
+
+        if item_type == "observation":
+            return False
+
+        return severity in ("warning", "critical")
+
+    anomaly_items = [
+        item for item in all_findings
+        if _is_anomaly(item)
+    ]
+
+    # ============================================================
+    # 10. HEALTHY SYSTEM
+    # (no anomaly-level items at all)
+    # ============================================================
+
+    if not anomaly_items:
 
         evidence["diagnostic_state"] = {
             "confirmed_anomaly": False,
-            "finding_count": 0,
-            "correlation_count": 0,
+            "finding_count": len(findings),
+            "correlation_count": len(correlations),
+            "observation_count": len(all_findings) - len(anomaly_items),
             "status": "healthy",
             "severity": "none"
         }
@@ -102,7 +127,7 @@ def analyze(data):
         return evidence
 
     # ============================================================
-    # 10. SEVERITY ORDER
+    # 11. SEVERITY ORDER
     # ============================================================
 
     severity_order = {
@@ -113,11 +138,11 @@ def analyze(data):
     }
 
     # ============================================================
-    # 11. FIND HIGHEST SEVERITY
+    # 12. FIND HIGHEST SEVERITY AMONG ANOMALY ITEMS
     # ============================================================
 
     highest = max(
-        all_findings,
+        anomaly_items,
         key=lambda x: severity_order.get(
             x.get("severity", "info"),
             1
@@ -130,13 +155,14 @@ def analyze(data):
     )
 
     # ============================================================
-    # 12. UPDATE DIAGNOSTIC STATE
+    # 13. UPDATE DIAGNOSTIC STATE
     # ============================================================
 
     evidence["diagnostic_state"] = {
         "confirmed_anomaly": True,
         "finding_count": len(findings),
         "correlation_count": len(correlations),
+        "observation_count": len(all_findings) - len(anomaly_items),
         "status": "anomaly_detected",
         "severity": highest_severity
     }

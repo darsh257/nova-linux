@@ -1,17 +1,39 @@
+from backend.diagnosis.service_classifier import parse_failed_services
+from backend.diagnosis.process_classifier import classify_process
+
+
 def correlate(data, findings):
 
     correlations = []
 
-    # ============================================================
-    # CPU + PROCESS CORRELATION
-    # ============================================================
+    cpu = data["cpu"]
+    cpu_usage = cpu["usage_percent"]
+    cpu_count = cpu["cpu_count"]
 
-    cpu_usage = data["cpu"]["usage_percent"]
-    cpu_count = data["cpu"]["cpu_count"]
+    # Load average relative to core count is a richer saturation signal.
+    # load1 may be None if /proc/loadavg could not be read.
+    load1 = cpu.get("load1")
 
     top_cpu = data["processes"]["top_cpu"]
 
+    # ============================================================
+    # CPU + PROCESS CORRELATION
+    #
+    # Only fire when the SYSTEM is actually under CPU pressure
+    # (system-wide usage_percent >= 80).
+    #
+    # load1 > cpu_count adds additional evidence of saturation.
+    # Process CPU% alone (which can exceed 100% on multi-core)
+    # does NOT count as system saturation.
+    # ============================================================
+
     if cpu_usage >= 80:
+
+        # Optionally strengthen evidence with load average
+        load_saturated = (
+            load1 is not None
+            and load1 > cpu_count
+        )
 
         heavy_processes = []
 
@@ -31,6 +53,17 @@ def correlate(data, findings):
 
         if heavy_processes:
 
+            reason = [
+                f"Overall CPU usage is {cpu_usage}%",
+                f"System has {cpu_count} CPUs",
+                "One or more processes are consuming significant CPU",
+            ]
+
+            if load_saturated:
+                reason.append(
+                    f"Load average ({load1:.2f}) exceeds CPU count ({cpu_count})"
+                )
+
             correlations.append({
                 "id": "cpu_process_correlation",
 
@@ -40,15 +73,11 @@ def correlate(data, findings):
                     else "warning"
                 ),
 
-                "confidence": 0.92,
+                "confidence": 0.94 if load_saturated else 0.92,
 
                 "title": "CPU saturation linked to processes",
 
-                "reason": [
-                    f"Overall CPU usage is {cpu_usage}%",
-                    f"System has {cpu_count} CPUs",
-                    "One or more processes are consuming significant CPU"
-                ],
+                "reason": reason,
 
                 "related_processes": heavy_processes
             })
@@ -62,8 +91,10 @@ def correlate(data, findings):
 
     memory_usage = memory["usage_percent"]
     swap_usage = swap["usage_percent"]
+    available_mb = memory["available_mb"]
 
-    if memory_usage >= 90 and swap_usage >= 50:
+    # Severe pressure: very low available memory AND high swap
+    if memory_usage >= 90 and swap_usage >= 50 and available_mb < 512:
 
         top_memory = data["processes"]["top_memory"]
 
@@ -79,6 +110,7 @@ def correlate(data, findings):
 
             "reason": [
                 f"Memory usage is {memory_usage}%",
+                f"Available memory is {available_mb} MB (below 512 MB)",
                 f"Swap usage is {swap_usage}%"
             ],
 
@@ -94,11 +126,8 @@ def correlate(data, findings):
             ]
         })
 
-    # ============================================================
-    # MEMORY + HIGH MEMORY PROCESS
-    # ============================================================
-
-    if memory_usage >= 85:
+    # Memory + high memory process
+    if memory_usage >= 85 and available_mb < 1024:
 
         memory_processes = []
 
@@ -123,7 +152,7 @@ def correlate(data, findings):
 
                 "severity": (
                     "critical"
-                    if memory_usage >= 95
+                    if memory_usage >= 95 and available_mb < 512
                     else "warning"
                 ),
 
@@ -133,6 +162,7 @@ def correlate(data, findings):
 
                 "reason": [
                     f"System memory usage is {memory_usage}%",
+                    f"Available memory is {available_mb} MB",
                     "One or more processes account for significant memory usage"
                 ],
 
@@ -141,9 +171,16 @@ def correlate(data, findings):
 
     # ============================================================
     # SERVICE + LOG CORRELATION
+    #
+    # Previously: ANY failed service + ANY log error = correlation.
+    # Now: we require a log message that specifically references
+    #      the name of the failed service.
+    #
+    # This prevents ACPI/Bluetooth log noise from being correlated
+    # with an unrelated service failure (e.g. ollama.service).
     # ============================================================
 
-    failed_services = (
+    failed_services_output = (
         data["services"]["failed_services"]["stdout"]
     )
 
@@ -151,27 +188,61 @@ def correlate(data, findings):
         data["logs"]["errors"]["stdout"]
     )
 
-    if failed_services.strip() and log_errors.strip():
+    if failed_services_output.strip() and log_errors.strip():
 
-        correlations.append({
+        # Extract the individual service names
+        failed_names = parse_failed_services(
+            failed_services_output
+        )
 
-            "id": "service_log_correlation",
+        # Build bare names for matching (strip ".service" suffix)
+        bare_names = set()
 
-            "severity": "critical",
+        for unit in failed_names:
+            bare_names.add(unit.lower())
+            if unit.lower().endswith(".service"):
+                bare_names.add(unit.lower()[: -len(".service")])
 
-            "confidence": 0.96,
+        # Match log lines that reference a failed service by name
+        matched_logs = []
 
-            "title": "Failed service supported by error logs",
+        for line in log_errors.splitlines():
 
-            "reason": [
-                "One or more services are failed",
-                "Journal contains error-level events"
-            ],
+            lower_line = line.lower()
 
-            "failed_services": (
-                failed_services.splitlines()
-            )
-        })
+            for bare in bare_names:
+
+                if bare and bare in lower_line:
+
+                    matched_logs.append(line.strip())
+                    break   # one service match per line is enough
+
+        if matched_logs:
+
+            correlations.append({
+
+                "id": "service_log_correlation",
+
+                "severity": "warning",
+
+                # Confidence scales with number of matching log lines;
+                # cap at 0.96
+                "confidence": min(
+                    0.75 + 0.05 * len(matched_logs),
+                    0.96
+                ),
+
+                "title": "Failed service referenced in error logs",
+
+                "reason": [
+                    "One or more services are in a failed state",
+                    "Journal error log contains messages naming the failed service(s)",
+                ],
+
+                "failed_services": failed_names,
+
+                "matching_log_lines": matched_logs[:10],
+            })
 
     # ============================================================
     # NETWORK CONNECTIVITY CORRELATION
@@ -447,59 +518,82 @@ def correlate(data, findings):
             })
 
     # ============================================================
-    # AI WORKLOAD + RESOURCE CORRELATION
+    # AI WORKLOAD OBSERVATION
+    #
+    # Phase 7 requirement:
+    #
+    # When an AI workload process is active, produce an informational
+    # observation regardless of system CPU level.
+    #
+    # This observation:
+    #   - uses severity "info"
+    #   - is tagged type "observation" (NOT an anomaly)
+    #   - must NOT cause confirmed_anomaly = True
+    #   - must NOT cause status = anomaly_detected
+    #
+    # The engine.py filters "info" observations out of the anomaly
+    # severity calculation (see diagnostic_state logic).
     # ============================================================
 
-    if cpu_usage >= 75:
+    ai_processes = []
 
-        ai_processes = []
+    for process in top_cpu[:10]:
 
-        for process in top_cpu[:5]:
+        command = process.get("command", "")
 
-            command = process.get(
-                "command",
-                ""
-            ).lower()
+        category = classify_process(command)
 
-            if any(
-                keyword in command
-                for keyword in [
-                    "ollama",
-                    "llama-server",
-                    "llama",
-                    "qwen",
-                    "python"
-                ]
-            ):
+        if category == "ai_workload":
 
-                ai_processes.append({
+            cpu_pct = process["cpu_percent"]
+            cpu_cores = round(cpu_pct / 100, 2)
 
-                    "pid": process["pid"],
-
-                    "command": process["command"],
-
-                    "cpu_percent": process["cpu_percent"]
-                })
-
-        if ai_processes:
-
-            correlations.append({
-
-                "id": "ai_workload_cpu_correlation",
-
-                "severity": "warning",
-
-                "confidence": 0.88,
-
-                "title": "High CPU usage associated with AI workload",
-
-                "reason": [
-                    f"Overall CPU usage is {cpu_usage}%",
-                    "An AI-related process is among the highest CPU consumers"
-                ],
-
-                "related_processes": ai_processes
+            ai_processes.append({
+                "pid": process["pid"],
+                "command": command,
+                "cpu_percent": cpu_pct,
+                "cpu_cores_used": cpu_cores,
+                "classification": category,
             })
+
+    if ai_processes:
+
+        reason_lines = [
+            f"System CPU: {cpu_usage}% across {cpu_count} cores",
+        ]
+
+        for ap in ai_processes:
+            reason_lines.append(
+                f"{ap['command']} (PID {ap['pid']}) is using "
+                f"{ap['cpu_percent']}% CPU "
+                f"≈ {ap['cpu_cores_used']} CPU core(s)"
+            )
+
+        correlations.append({
+
+            "id": "ai_workload_observation",
+
+            # info severity — deliberately not warning or critical
+            "severity": "info",
+
+            # Observations use a type tag so the engine can
+            # distinguish them from genuine anomaly correlations.
+            "type": "observation",
+
+            "confidence": 0.90,
+
+            "title": "AI workload active",
+
+            "reason": reason_lines,
+
+            "related_processes": ai_processes,
+
+            "system_context": {
+                "cpu_count": cpu_count,
+                "system_cpu_usage_percent": cpu_usage,
+                "load1": load1,
+            }
+        })
 
     # ============================================================
     # RETURN CORRELATIONS
