@@ -1,5 +1,6 @@
 from backend.diagnosis.rules import run_rules
 from backend.diagnosis.correlation import correlate
+from backend.diagnosis.root_cause import generate_root_cause_candidates
 from backend.diagnosis.evidence import build_evidence
 from backend.diagnosis.storage_intelligence import analyze_storage
 from backend.diagnosis.network_connectivity import analyze_connectivity
@@ -58,18 +59,29 @@ def analyze(data):
     )
 
     # ============================================================
-    # 6. BUILD CORE EVIDENCE
+    # 6. ROOT-CAUSE CANDIDATES
+    # ============================================================
+
+    root_cause_candidates = generate_root_cause_candidates(
+        data,
+        findings,
+        correlations
+    )
+
+    # ============================================================
+    # 7. BUILD CORE EVIDENCE
     # ============================================================
 
     evidence = build_evidence(
         data,
         findings,
         correlations,
+        root_cause_candidates,
         storage_intelligence
     )
 
     # ============================================================
-    # 7. ATTACH INTELLIGENCE RESULTS
+    # 8. ATTACH INTELLIGENCE RESULTS
     # ============================================================
 
     evidence["storage_intelligence"] = (
@@ -81,13 +93,13 @@ def analyze(data):
     )
 
     # ============================================================
-    # 8. COMBINE ALL CONFIRMED FINDINGS
+    # 9. COMBINE ALL CONFIRMED FINDINGS
     # ============================================================
 
     all_findings = findings + correlations
 
     # ============================================================
-    # 9. DETERMINE ANOMALY-LEVEL ITEMS
+    # 10. DETERMINE ANOMALY-LEVEL ITEMS
     #
     # Only "warning" or "critical" items (not tagged as
     # type="observation") are genuine anomalies.
@@ -109,7 +121,7 @@ def analyze(data):
     ]
 
     # ============================================================
-    # 10. HEALTHY SYSTEM
+    # 11. HEALTHY SYSTEM
     # (no anomaly-level items at all)
     # ============================================================
 
@@ -120,6 +132,7 @@ def analyze(data):
             "finding_count": len(findings),
             "correlation_count": len(correlations),
             "observation_count": len(all_findings) - len(anomaly_items),
+            "candidate_count": len(root_cause_candidates),
             "status": "healthy",
             "severity": "none"
         }
@@ -127,7 +140,7 @@ def analyze(data):
         return evidence
 
     # ============================================================
-    # 11. SEVERITY ORDER
+    # 12. SEVERITY ORDER
     # ============================================================
 
     severity_order = {
@@ -138,7 +151,7 @@ def analyze(data):
     }
 
     # ============================================================
-    # 12. FIND HIGHEST SEVERITY AMONG ANOMALY ITEMS
+    # 13. FIND HIGHEST SEVERITY AMONG ANOMALY ITEMS
     # ============================================================
 
     highest = max(
@@ -155,7 +168,7 @@ def analyze(data):
     )
 
     # ============================================================
-    # 13. UPDATE DIAGNOSTIC STATE
+    # 14. UPDATE DIAGNOSTIC STATE
     # ============================================================
 
     evidence["diagnostic_state"] = {
@@ -163,6 +176,7 @@ def analyze(data):
         "finding_count": len(findings),
         "correlation_count": len(correlations),
         "observation_count": len(all_findings) - len(anomaly_items),
+        "candidate_count": len(root_cause_candidates),
         "status": "anomaly_detected",
         "severity": highest_severity
     }

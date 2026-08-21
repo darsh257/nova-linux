@@ -3,7 +3,7 @@ from backend.diagnosis.log_intelligence import (
 )
 
 
-def build_evidence(data, findings, correlations, storage_intelligence=None):
+def build_evidence(data, findings, correlations, root_cause_candidates, storage_intelligence=None):
     """
     Build the structured evidence dictionary.
 
@@ -15,6 +15,8 @@ def build_evidence(data, findings, correlations, storage_intelligence=None):
         Deterministic findings from run_rules().
     correlations : list
         Correlations from correlate().
+    root_cause_candidates : list
+        Root cause candidates from generate_root_cause_candidates().
     storage_intelligence : dict, optional
         Already-computed storage intelligence from analyze_storage().
         If None (e.g. called from tests), no storage section is included.
@@ -225,6 +227,13 @@ def build_evidence(data, findings, correlations, storage_intelligence=None):
 
         "correlations":
             correlations,
+
+        # =============================================
+        # ROOT CAUSE CANDIDATES
+        # =============================================
+
+        "root_cause_candidates":
+            root_cause_candidates,
 
         # =============================================
         # SERVICES

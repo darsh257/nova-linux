@@ -26,6 +26,11 @@ def build_ai_evidence(evidence):
         []
     )
 
+    root_cause_candidates = evidence.get(
+        "root_cause_candidates",
+        []
+    )
+
     logs = evidence.get(
         "logs",
         {}
@@ -76,6 +81,8 @@ def build_ai_evidence(evidence):
         "confirmed_findings": findings,
 
         "correlations": correlations,
+
+        "root_cause_candidates": root_cause_candidates,
 
         # =====================================================
         # SYSTEM CONTEXT
@@ -134,6 +141,9 @@ def diagnose_with_ai(evidence):
             "- None\n\n"
 
             "CORRELATED EVIDENCE:\n"
+            "- None\n\n"
+
+            "ROOT CAUSE CANDIDATES:\n"
             "- None\n\n"
 
             "LOG OBSERVATIONS:\n"
